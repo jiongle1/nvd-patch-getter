@@ -1,0 +1,5 @@
+response_eg.json
+*.log
+*.patch
+*.pyc
+__pycache__/
