@@ -2,4 +2,5 @@ response_eg.json
 *.log
 *.patch
 *.pyc
+*.json
 __pycache__/
