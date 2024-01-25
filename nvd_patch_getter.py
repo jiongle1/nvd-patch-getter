@@ -14,8 +14,15 @@ Else, return False
 import requests
 import os
 import argparse
+import json
+import re
+from ftplib import FTP
+from urllib.parse import urlparse
 
-from logger_module import logger
+
+from settings import logger
+import settings
+
 
 NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 FOLDERNAME = "patches"
@@ -24,117 +31,148 @@ FOLDERNAME = "patches"
 class Nvd_Patch_Getter:
 
     def __init__(self, args):
+        config = settings.get_config()
+        self.apiKey = config['apiKey']
         logger.info("Initializing...")
         self.args = args
-        self.is_in_nvd = False
-        self.is_github_repo = False
-        self.is_github_patch = False
-        self.is_patch_tag = False
+        self.is_in_nvd = True
         self.patch_text = ""
+        self.is_cve_public_bool = True
+
 
     def run(self):
         cve_id = self.args.cve_id
-        download = self.args.download
-        #local_dir_check_create(FOLDERNAME)
+        self.local_dir_check_create(FOLDERNAME)
         cve_json = self.nvd_cve_id_check(cve_id)
-        if cve_json:
-            github_bool = self.github_check(cve_json)
+        if not cve_json:
+            logger.warning(f"CVE ID {cve_id} does not exist on NVD or is not publicly available")
+            return""
+        cve_patch_link_list = self.parse_patch(cve_json)
+        if cve_patch_link_list:
+            self.patch_text = self.download_cve_patch(cve_patch_link_list, cve_id)
         else:
-            pass
-        if github_bool:
-            cve_patch_link = self.parse_patch(cve_json)
-            if cve_patch_link:
-                self.patch_text = self.download_cve_patch(cve_patch_link, cve_id, download)
-            else:
-                logger.info(f"CVE ID: {cve_id} refers to a Github repository, but does not have patch")
-                logger.info("Exiting")
-                pass
-        else:
-            logger.info(f"CVE ID: {cve_id} does not refer to a Github repository")
+            logger.info(f"CVE ID: {cve_id} does not have patch")
             logger.info("Exiting")
-            pass
-        
 
-    def download_cve_patch(self, cve_patch_link, cve_id, download):
-        # Add a '.patch' to the end of patch URL to download it
-        cve_patch_url = cve_patch_link + ".patch"
-        response = requests.get(cve_patch_url)
-        #filename = "./" + FOLDERNAME + '/' + cve_id + ".patch"
-        filename = cve_id + ".patch"
 
-        if response.status_code == 200:
-            if download:
-                with open(filename, 'w', encoding='utf-8') as file:
+    def download_cve_patch(self, cve_patch_link_list, cve_id):
+        '''
+        Returns empty string
+
+        Args:
+            cve_patch_link_list (list): list of patch links
+            cve_id (string): Current working cve id
+        Returns:
+            string: ""
+        '''
+        # include headers for NVD API key
+
+        for index, cve_patch_url in enumerate(cve_patch_link_list):
+            response = requests.get(cve_patch_url)
+            filename = "./" + FOLDERNAME + '/' + cve_id + '_' + str(index) + ".patch"
+
+            if response.status_code == 200:
+                with open(filename, 'w') as file:
                     file.write(response.text)
                 logger.info(f"Patch written to {filename}")
             else:
-                logger.info(f"Patch not saved, returned as text")
-            return response.text
-        else:
-            logger.info(f"Patch download failed, Error: {response.status_code}")
-            return""
-
+                logger.warning(f"Patch not found. Status code: {response.status_code}")
+        return ""
+    
 
     def parse_patch(self, cve_json):
+        """returns a list of patch urls
+
+        Args:
+            cve_json (_type_): _description_
+
+        Returns:
+            a list of patch urls or an empty list
+            _type_: _description_
+        """
         # get list of references
         list_references = cve_json['vulnerabilities'][0]['cve']['references']
+        patch_urls = []
         for reference_dict in list_references:
-            # only get patch from github source
-            if reference_dict['source'] == "security-advisories@github.com":
-                try:
-                    for tag_item in reference_dict['tags']:
-                        if tag_item == "Patch":
-                            patch_url = reference_dict['url']
-                            logger.info(f"URL to download patch is: {patch_url}")
-                            self.is_github_patch = True
-                            return patch_url
-                        else:
-                            self.is_github_patch = False
-                            pass
-                except:
-                    logger.info(f"Source is from github, but no patch tag is found")
+            # go through every URL and search for commit word in link
+            any_url = reference_dict['url']
+            commit_url = self.is_url_contain_commit(any_url)
+            openssl_url = self.is_url_contain_openssl(any_url)
+            if commit_url:
+                # commit urls can come from github, savannah, openssl
+                downloadable_patch_url = self.conver_commit_patch(commit_url)
+                patch_urls.append(downloadable_patch_url)
+            elif openssl_url:
+                downloadable_patch_url = self.conver_openssl_patch(openssl_url)
+                patch_urls.append(downloadable_patch_url)
             else:
                 pass
-            if 'tags' in reference_dict:
-                for tag_item in reference_dict['tags']:
-                    if tag_item == "Patch":
-                        logger.info(f"Patch tag is found, unsure of source")
-                        self.is_patch_tag = True
-                    else:
-                        pass
-            else:
-                pass
-        logger.info(f"Patch is not found")
+        return patch_urls
+
+
+    def conver_openssl_patch(self, openssl_url):
+        openssl_url = re.sub('secadv_', 'secadv/', openssl_url)
+        return openssl_url
+
+
+    def conver_commit_patch(self, commit_url):
+        # if github url, add .patch to end url
+        if 'github.com' in commit_url:
+            patch_url = commit_url + '.patch'
+            return patch_url
+        # if starts with git. , highly likely swapping the word commit with
+        # patch will work
+        elif 'git.' in commit_url:
+            #convert ascii back to character, if any
+            commit_url = re.sub(r'%3B', ';', commit_url)
+            patch_url = re.sub('commit', 'patch', commit_url)
+            return patch_url
+
+
+    def is_url_contain_commit(self, any_url):
+        if 'commit' in any_url:
+            return any_url
         return ""
 
 
-    def github_check(self, cve_json):
-        # get sourceIdentifier
-        # Github vulnerabilities are from github itself
-        sourceIdentifier = cve_json['vulnerabilities'][0]['cve']['sourceIdentifier']
-        if sourceIdentifier == "security-advisories@github.com":
-            logger.info("CVE ID references to Github")
-            self.is_github_repo = True
-        else:
-            logger.info(f"CVE ID: {cve_json['vulnerabilities'][0]['cve']['id']} does not reference to Github, try another ID")
-            self.is_github_repo = False
-        return self.is_github_repo
+    def is_url_contain_openssl(self, any_url):
+        if 'openssl.org' in any_url:
+            return any_url
+        return ""
 
+
+    def is_cve_public(self, cve_json):
+        try:
+            vulnerabilities = cve_json.get("vulnerabilities", [])
+            if vulnerabilities:
+                vuln_status = vulnerabilities[0].get("cve", {}).get("vulnStatus", "")
+                return vuln_status in ["Analyzed", "Modified"]
+            return False
+        except json.JSONDecodeError:
+            print("Error: Invalid JSON")
+            return False
+    
 
     def nvd_cve_id_check(self, cve_id):
         # Check if api can return cve_id
         # e.g https://services.nvd.nist.gov/rest/json/cves/2.0?cveId=CVE-2019-1010218
+        headers = {
+            "apiKey": f"{self.apiKey}" 
+        }
         cve_url = NVD_API_URL + "?cveId=" + cve_id
-        response = requests.get(cve_url)
+        response = requests.get(cve_url, headers=headers)
 
         if response.status_code == 200:
             data = response.json()
-            self.is_in_nvd = True
+            if not self.is_cve_public(data):
+                self.is_cve_public_bool = False
+                logger.info(f"CVE ID is not public, Error: {data}")
+                return""
             return data
         else:
             logger.info(f"CVE ID does not exist on NVD, Error: {response.status_code}")
             self.is_in_nvd = False
-            return None
+            return ""
         
 
     def local_dir_check_create(self, FOLDERNAME):
@@ -142,7 +180,7 @@ class Nvd_Patch_Getter:
         # Create if it does not exist
         curr_dir = os.getcwd()
         target_dir = os.path.join(curr_dir, FOLDERNAME)
-
+        print(target_dir)
         if not os.path.exists(target_dir):
             logger.info("Folder named patches does not exist! Creating...")
             os.makedirs(target_dir)
@@ -158,24 +196,14 @@ class Nvd_Patch_Getter:
     def is_in_nvd_getter(self):
         return self.is_in_nvd
     
-
-    def is_github_repo_getter(self):
-        return self.is_github_repo
     
-
-    def is_github_patch_getter(self):
-        return self.is_github_patch
+    def is_cve_public_getter(self):
+        return self.is_cve_public_bool
     
-
-    def is_patch_tag_getter(self):
-        return self.is_patch_tag
-    
-
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description='Takes in cve-id and downloads patch file from NVD website')
     parser.add_argument('-id', '--cve_id', help='CVE ID input')
-    parser.add_argument('-d', '--download', action='store_true', help="Include flag for download")
     return parser.parse_args()
 
 

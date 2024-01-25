@@ -1,6 +1,10 @@
-response_eg.json
 *.log
 *.patch
 *.pyc
-*.json
 __pycache__/
+
+# local folders I created for testing
+patches/
+examples/
+result/
+response_eg.json
