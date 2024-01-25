@@ -20,9 +20,9 @@ Flags under nvd_patch_getter.py:
 def main():
     old_files = old_patch_getter()
     cve_id_list = parse_cve_id(old_files)
-    download_all_patches(cve_id_list[0:7])
+    download_all_patches(cve_id_list)
     new_files = new_patch_getter()
-    compare_json_output = compare_patch_file(old_files[0:7], new_files[0:7], cve_id_list[0:7])
+    compare_json_output = compare_patch_file(old_files, new_files, cve_id_list)
     with open('result.json', 'w') as json_file:
         json.dump(compare_json_output, json_file, indent=2)
 

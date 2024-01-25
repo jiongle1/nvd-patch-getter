@@ -4,6 +4,7 @@
 __pycache__/
 
 # local folders I created for testing
+config.json
 patches/
 examples/
 result/

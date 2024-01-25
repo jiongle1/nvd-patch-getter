@@ -68,15 +68,18 @@ class Nvd_Patch_Getter:
         # include headers for NVD API key
 
         for index, cve_patch_url in enumerate(cve_patch_link_list):
-            response = requests.get(cve_patch_url)
-            filename = "./" + FOLDERNAME + '/' + cve_id + '_' + str(index) + ".patch"
+            try:
+                response = requests.get(cve_patch_url)
 
-            if response.status_code == 200:
-                with open(filename, 'w') as file:
-                    file.write(response.text)
-                logger.info(f"Patch written to {filename}")
-            else:
-                logger.warning(f"Patch not found. Status code: {response.status_code}")
+                if response.status_code == 200:
+                    filename = "./" + FOLDERNAME + '/' + cve_id + '_' + str(index) + ".patch"
+                    with open(filename, 'w') as file:
+                        file.write(response.text)
+                    logger.info(f"Patch written to {filename}")
+                else:
+                    logger.warning(f"Patch not found. Status code: {response.status_code}")
+            except:
+                logger.warning(f"Patch not found. URL: {cve_patch_url}")
         return ""
     
 
