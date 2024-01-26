@@ -9,3 +9,5 @@ patches/
 examples/
 result/
 response_eg.json
+result.json
+final_patches/

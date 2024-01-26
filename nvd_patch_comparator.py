@@ -6,6 +6,7 @@ import spacy
 from settings import logger
 from nvd_patch_getter import parse_arguments as nvd_patch_getter_parser
 from nvd_patch_getter import Nvd_Patch_Getter
+from spacy.tokens import Doc
 
 OLD_PATCH_DIRECTORY = r"/mnt/c/Users/Jiong Le/Downloads/patch_raw_240116"
 NEW_PATCH_DIRECTORY = r"/home/scantist_jl/projects/nvd-patch-getter/patches"
@@ -20,7 +21,7 @@ Flags under nvd_patch_getter.py:
 def main():
     old_files = old_patch_getter()
     cve_id_list = parse_cve_id(old_files)
-    download_all_patches(cve_id_list)
+    #download_all_patches(cve_id_list)
     new_files = new_patch_getter()
     compare_json_output = compare_patch_file(old_files, new_files, cve_id_list)
     with open('result.json', 'w') as json_file:
@@ -66,6 +67,7 @@ def compare_patch_file(old_files, new_files, cve_id_list):
         cve_dict_details["new_patch_file"] = []
         cve_dict_details["similarity_score"] = []
         cve_dict_details["file_match"] = ""
+        logger.info(f"Index of current file is {old_index}")
         for new_index, new_patch_file in enumerate(new_files):
             if cve_id in new_patch_file:
                 new_patch_dir = NEW_PATCH_DIRECTORY + '/' + new_patch_file
@@ -90,14 +92,24 @@ def compare_patch_file(old_files, new_files, cve_id_list):
 
 def semantic_file_comparator(oldcontent, newcontent):
     # uses semantic comparison, files are considered the same if more than 90% match
-    nlp = spacy.load("en_core_web_sm")
-    doc1 = nlp(oldcontent)
-    doc2 = nlp(newcontent)
+    max_length = max(len(oldcontent), len(newcontent))
+
+    processed_oldfile = process_file(oldcontent, max_length)
+    processed_newfile = process_file(newcontent, max_length)
 
     # Calculate semantic similarity using spaCy's similarity method
-    similarity_score = doc1.similarity(doc2)
+    similarity_score = processed_oldfile.similarity(processed_newfile)
     return similarity_score
 
+
+def process_file(content, max_length):
+    paragraphs = content.split("\n")
+    nlp = spacy.load("en_core_web_sm")
+    nlp.max_length = max_length
+
+    docs = list(nlp.pipe(paragraphs))
+    c_doc = Doc.from_docs(docs)
+    return c_doc
 
 
 def run_nvd_patch_getter(cve_id):
