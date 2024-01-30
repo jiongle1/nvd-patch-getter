@@ -28,8 +28,9 @@ def main():
                         #take the old patch
                         copy_old_patch(dict1)
             else:
-                # no patch is found, take old patch
-                copy_old_patch(dict1)
+                # no patch is found, skip
+                pass
+                #copy_old_patch(dict1)
 
 
 def copy_old_patch(dict1):
