@@ -173,6 +173,7 @@ class Nvd_Patch_Getter:
                 return""
             return data
         else:
+            logger.info(f"API key printed from config.json: {self.apiKey}")
             logger.info(f"CVE ID does not exist on NVD, Error: {response.status_code}")
             self.is_in_nvd = False
             return ""
