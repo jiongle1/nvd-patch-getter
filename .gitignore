@@ -11,3 +11,5 @@ result/
 response_eg.json
 result.json
 final_patches/
+*.tar.gz
+references/

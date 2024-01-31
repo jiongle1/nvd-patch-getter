@@ -14,23 +14,35 @@ def main():
 
         for dict1 in json_data['result']:
             if dict1["similarity_score"]:
+                #ignore html in new patch files
+                for file in dict1["new_patch_file"]:
+                    with open(file, 'r') as readfile:
+                        if "<!DOCTYPE html>" in readfile:
+                            pass
                 for score in dict1["similarity_score"]:
-                    if score >= 0.99:
+                    if score > 0.99:
                         #old and new patch are extremely similar, take the old patch
                         copy_old_patch(dict1)
                     elif score < 0.99 and len(dict1["similarity_score"]) == 1:
                         #only 1 new patch is found, and there are some difference,
                         #take the new patch file
                         copy_new_patch(dict1)
-                    else:
-                        #more than 1 new patch is found
-                        #old patch might be a combination of all the patches resulting in larger differences
-                        #take the old patch
-                        copy_old_patch(dict1)
+                    elif score < 0.99 and len(dict1["similarity_score"]) > 1:
+                        #more than 1 new patch is found regardless of the score
+                        #submit the file with the highest match
+                        max_score_idx = dict1["similarity_score"].index(max(dict1["similarity_score"]))
+                        copy_one_new_patch(dict1, max_score_idx)
             else:
                 # no patch is found, skip
                 pass
                 #copy_old_patch(dict1)
+
+
+def copy_one_new_patch(dict1, max_score_idx):
+    filename = dict1["new_patch_file"][max_score_idx]
+    id_name = filename.split("/")[-1].split("_")[0]
+    patch_filename = FINAL_PATCHES_LOC + '/' + id_name + '.patch'
+    shutil.copy(dict1["new_patch_file"][max_score_idx], patch_filename)    
 
 
 def copy_old_patch(dict1):
@@ -41,7 +53,6 @@ def copy_new_patch(dict1):
     old_filename = dict1["new_patch_file"][0]
     id_name = old_filename.split("/")[-1].split("_")[0]
     patch_filename = FINAL_PATCHES_LOC + '/' + id_name + '.patch'
-    print(patch_filename)
     shutil.copy(dict1["new_patch_file"][0], patch_filename)
 
 

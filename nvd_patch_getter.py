@@ -24,10 +24,6 @@ from settings import logger
 import settings
 
 
-NVD_API_URL = "https://services.nvd.nist.gov/rest/json/cves/2.0"
-FOLDERNAME = "patches"
-
-
 class Nvd_Patch_Getter:
 
     def __init__(self, args):
@@ -38,17 +34,20 @@ class Nvd_Patch_Getter:
         self.is_in_nvd = True
         self.patch_text = ""
         self.is_cve_public_bool = True
+        self.nvd_api_url = "https://services.nvd.nist.gov/rest/json/cves/2.0"
+        self.foldername = "patches"
 
 
     def run(self):
         cve_id = self.args.cve_id
-        self.local_dir_check_create(FOLDERNAME)
+        self.local_dir_check_create()
         cve_json = self.nvd_cve_id_check(cve_id)
         if not cve_json:
             logger.warning(f"CVE ID {cve_id} does not exist on NVD or is not publicly available")
             return""
         cve_patch_link_list = self.parse_patch(cve_json)
         if cve_patch_link_list:
+            logger.info(f"List of CVE links for download: {cve_patch_link_list}")
             self.patch_text = self.download_cve_patch(cve_patch_link_list, cve_id)
         else:
             logger.info(f"CVE ID: {cve_id} does not have patch")
@@ -72,7 +71,7 @@ class Nvd_Patch_Getter:
                 response = requests.get(cve_patch_url)
 
                 if response.status_code == 200:
-                    filename = "./" + FOLDERNAME + '/' + cve_id + '_' + str(index) + ".patch"
+                    filename = "./" + self.foldername + '/' + cve_id + '_' + str(index) + ".patch"
                     with open(filename, 'w') as file:
                         file.write(response.text)
                     logger.info(f"Patch written to {filename}")
@@ -97,20 +96,48 @@ class Nvd_Patch_Getter:
         list_references = cve_json['vulnerabilities'][0]['cve']['references']
         patch_urls = []
         for reference_dict in list_references:
-            # go through every URL and search for commit word in link
-            any_url = reference_dict['url']
-            commit_url = self.is_url_contain_commit(any_url)
-            openssl_url = self.is_url_contain_openssl(any_url)
-            if commit_url:
-                # commit urls can come from github, savannah, openssl
-                downloadable_patch_url = self.conver_commit_patch(commit_url)
-                patch_urls.append(downloadable_patch_url)
-            elif openssl_url:
-                downloadable_patch_url = self.conver_openssl_patch(openssl_url)
-                patch_urls.append(downloadable_patch_url)
-            else:
+            if "Vendor Advisory" in reference_dict.keys():
+                logger.info("Skip vendor advisory tag")
+                #skip all vendor advisory links
                 pass
+            else:
+                # go through every URL and search for commit word in link
+                any_url = reference_dict['url']
+                commit_url = self.is_url_contain_commit(any_url)
+                openssl_url = self.is_url_contain_openssl(any_url)
+                #curl.haxx.se/libcurl-contentencoding.patch
+                curl_url = self.is_url_contain_curl(any_url)
+                #https://sourceware.org/git/?p=glibc.git;a=commit;h=199eb0de8d673fb23aa127721054b4f1803d61f3
+                sourceware_url = self.is_url_contain_sourceware(any_url)
+                if commit_url:
+                    # commit urls can come from github, savannah, openssl
+                    downloadable_patch_url = self.conver_commit_patch(commit_url)
+                    patch_urls.append(downloadable_patch_url)
+                elif openssl_url:
+                    downloadable_patch_url = self.conver_openssl_patch(openssl_url)
+                    patch_urls.append(downloadable_patch_url)
+                elif curl_url:
+                    #no need for conversion
+                    patch_urls.append(curl_url)
+                elif sourceware_url:
+                    downloadable_patch_url = self.conver_sourceware_patch(sourceware_url)
+                    patch_urls.append(downloadable_patch_url)
+                else:
+                    pass
         return patch_urls
+
+
+    def conver_sourceware_patch(self, sourceware_url):
+        commit_url = re.sub(r'%3B', ';', sourceware_url)
+        if 'commit' in sourceware_url:
+            patch_url = re.sub('commit', 'patch', commit_url)
+        elif ';' in sourceware_url:
+            #https://sourceware.org/git/gitweb.cgi?p=glibc.git;h=5460617d1567657621107d895ee2dd83bc1f88f2
+            #https://sourceware.org/git/?p=glibc.git;a=patch;h=5460617d1567657621107d895ee2dd83bc1f88f2
+            patch_url = re.sub(';', ';a=patch;', commit_url)
+        else:
+            patch_url = ""
+        return patch_url
 
 
     def conver_openssl_patch(self, openssl_url):
@@ -132,6 +159,12 @@ class Nvd_Patch_Getter:
             return patch_url
 
 
+    def is_url_contain_sourceware(self, any_url):
+        if 'sourceware.org' in any_url:
+            return any_url
+        return ""
+
+
     def is_url_contain_commit(self, any_url):
         if 'commit' in any_url:
             return any_url
@@ -140,6 +173,12 @@ class Nvd_Patch_Getter:
 
     def is_url_contain_openssl(self, any_url):
         if 'openssl.org' in any_url:
+            return any_url
+        return ""
+    
+
+    def is_url_contain_curl(self, any_url):
+        if 'curl.' in any_url and '.html' not in any_url:
             return any_url
         return ""
 
@@ -162,7 +201,7 @@ class Nvd_Patch_Getter:
         headers = {
             "apiKey": f"{self.apiKey}" 
         }
-        cve_url = NVD_API_URL + "?cveId=" + cve_id
+        cve_url = self.nvd_api_url + "?cveId=" + cve_id
         response = requests.get(cve_url, headers=headers)
 
         if response.status_code == 200:
@@ -179,11 +218,11 @@ class Nvd_Patch_Getter:
             return ""
         
 
-    def local_dir_check_create(self, FOLDERNAME):
+    def local_dir_check_create(self):
         # Check if current directory has folder named "patches"
         # Create if it does not exist
         curr_dir = os.getcwd()
-        target_dir = os.path.join(curr_dir, FOLDERNAME)
+        target_dir = os.path.join(curr_dir, self.foldername)
         print(target_dir)
         if not os.path.exists(target_dir):
             logger.info("Folder named patches does not exist! Creating...")
